@@ -2,8 +2,8 @@ import requests
 from bs4 import BeautifulSoup
 from transformers import pipeline
 import validators
+summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
 
-summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
 classifier = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
 
 # Define Categories for News Classification
@@ -57,13 +57,19 @@ def extract_text_from_url(url):
         return "Failed to fetch the article."
 
 def summarize_article(text):
-    """Summarize the extracted article text with a max of 500 tokens."""
-    if not text or len(text) < 100:  
+    """Summarize the extracted article text aiming for 50–80 words."""
+    if not text or len(text) < 100:
         return "Failed to extract content from the given URL."
 
-    text = text[:2000]  # Limit text to 2000 characters to prevent overloading the model
-    summary = summarizer(text, max_length=50, min_length=20, do_sample=False)
-    return summary[0]['summary_text']
+    text = text[:1500]  # Slightly reduced input size to boost speed
+
+    try:
+        summary = summarizer(text, max_length=100, min_length=65, do_sample=False)
+        return summary[0]['summary_text']
+    except Exception as e:
+        print(f"Summarization failed: {e}")
+        return "Summary unavailable."
+
 
 
 def classify_news(text):
@@ -71,9 +77,6 @@ def classify_news(text):
     classification = classifier(text, candidate_labels=NEWS_CATEGORIES, multi_label=False)
     return classification['labels'][0]  # Return the top category
 
-# Example Usage
-news_url = "https://www.bloomberg.com/news/articles/2025-03-10/apple-readies-dramatic-design-overhauls-for-ios-19-ipados-19-and-macos-16"
 
-# Extract, Summarize & Classify
-extracted_text = extract_text_from_url(news_url)
+
 

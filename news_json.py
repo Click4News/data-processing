@@ -1,44 +1,72 @@
 import json
 import uuid
 import boto3
+import time
+import logging
 from datetime import datetime
 from pymongo import MongoClient
+from botocore.exceptions import ClientError
 from news_summary import extract_text_from_url, summarize_article, classify_news
+from dotenv import load_dotenv
+import os
 
-# AWS SQS Configuration
-#AWS_REGION = "us-east-1"  # Change to your AWS region
-#SQS_QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/your-account-id/your-queue-name"
+# Logging setup
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-#sqs = boto3.client("sqs", region_name=AWS_REGION)
-
-# MongoDB Setup
-MONGO_URI = f"mongodb+srv://vasa2949:sandy@cluster0.j5gm2.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+# Constants
+AWS_REGION = 'us-east-2'
+QUEUE_NAME = 'test-queue'
 DB_NAME = "newsDB"
 COLLECTION_NAME = "news"
 
-client = MongoClient(MONGO_URI)
+# Load environment variables from .env
+load_dotenv()
+mongo_uri = os.getenv("MONGO_URI")
+aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
+aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+
+# MongoDB Setup
+client = MongoClient(mongo_uri)
 db = client[DB_NAME]
 collection = db[COLLECTION_NAME]
 
+# SQS client with credentials from .env
+sqs = boto3.client(
+    "sqs",
+    region_name=AWS_REGION,
+    aws_access_key_id=aws_access_key_id,
+    aws_secret_access_key=aws_secret_access_key
+)
+
+def get_queue_url(queue_name):
+    """Returns SQS queue URL"""
+    try:
+        response = sqs.get_queue_url(QueueName=queue_name)
+        return response['QueueUrl']
+    except ClientError as e:
+        logger.error(f"Error getting queue URL: {e}")
+        raise
+
 def process_news(news_event):
-    """Processes a single news JSON object into GeoJSON format."""
+    """Processes a single news JSON object into GeoJSON format and stores in MongoDB."""
     news_url = news_event.get("url")
     title = news_event.get("title", "Untitled News")
 
+    if not news_url or not isinstance(news_url, str):
+        logger.warning(f"Invalid URL: {news_url}")
+        return None
+
     extracted_text = extract_text_from_url(news_url)
-    
     if extracted_text in ["Content extraction failed.", "Failed to fetch the article."]:
-        print(f"Error processing URL: {news_url}")
+        logger.warning(f"Error processing URL: {news_url}")
         return None
 
     summary = summarize_article(extracted_text)
     category = classify_news(summary)
-
-    # Generate a unique identifier for the news
     news_id = str(uuid.uuid4())
 
-    # Placeholder coordinates (Replace with actual geolocation extraction)
-    coordinates = [-74.006, 40.7128]  # Example coordinates (New York)
+    coordinates = [-74.006, 40.7128]  # Default: New York
 
     geojson_news = {
         "type": "FeatureCollection",
@@ -52,104 +80,66 @@ def process_news(news_event):
                 "properties": {
                     "title": title,
                     "summary": summary,
-                    "link": news_url
+                    "link": news_url,
+                    "category": category
                 }
             }
         ]
     }
 
-    # Store in MongoDB
-    # Store in MongoDB
-    inserted_doc = collection.insert_one(geojson_news)
-    geojson_news["_id"] = str(inserted_doc.inserted_id)  # Convert ObjectId to string
-    print(f"Stored news: {title}")
-
+    inserted = collection.insert_one(geojson_news)
+    geojson_news["_id"] = str(inserted.inserted_id)
+    logger.info(f"Stored news: {title}")
     return geojson_news
 
-
-'''def consume_sqs_messages():
-    """Continuously polls AWS SQS and processes messages."""
-    print("AWS SQS Consumer is listening...")
-
+def consume_messages(queue_url, max_messages=10, wait_time=20, visibility_timeout=30):
+    """Continuously consumes and processes messages from SQS."""
+    logger.info(f"Listening to SQS queue: {QUEUE_NAME}")
     while True:
-        response = sqs.receive_message(
-            QueueUrl=SQS_QUEUE_URL,
-            MaxNumberOfMessages=10,  # Process up to 10 messages at a time
-            WaitTimeSeconds=5  # Long polling to reduce empty responses
-        )
+        try:
+            response = sqs.receive_message(
+                QueueUrl=queue_url,
+                MaxNumberOfMessages=max_messages,
+                WaitTimeSeconds=wait_time,
+                VisibilityTimeout=visibility_timeout,
+                MessageAttributeNames=["All"]
+            )
 
-        if "Messages" not in response:
-            continue  # No new messages, keep polling
+            messages = response.get("Messages", [])
+            if not messages:
+                logger.info("No messages received. Polling again...")
+                continue
 
-        for message in response["Messages"]:
-            try:
-                # Parse JSON (Assuming multiple news items in one message)
-                news_events = json.loads(message["Body"])
+            for message in messages:
+                raw_body = message.get("Body", "")
+                if not raw_body.strip():
+                    logger.warning("Skipped empty message.")
+                    continue
 
-                if isinstance(news_events, list):  # If multiple JSON objects
-                    for news_event in news_events:
-                        process_news(news_event)
-                else:  # Single JSON object
-                    process_news(news_events)
+                try:
+                    parsed_body = json.loads(raw_body)
+                    if isinstance(parsed_body, list):
+                        for item in parsed_body:
+                            process_news(item)
+                    else:
+                        process_news(parsed_body)
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON decode error: {e} — Raw: {raw_body}")
 
-                # Delete message after processing
-                sqs.delete_message(QueueUrl=SQS_QUEUE_URL, ReceiptHandle=message["ReceiptHandle"])
-                print(f"Deleted message: {message['MessageId']}")
+                receipt_handle = message["ReceiptHandle"]
+                sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=receipt_handle)
+                logger.info(f"Deleted message: {message.get('MessageId', 'N/A')}")
 
-            except Exception as e:
-                print(f"Error processing message: {e}")'''
+        except KeyboardInterrupt:
+            logger.info("Consumer stopped by user.")
+            break
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}")
+            time.sleep(5)
 
-# Start consuming SQS messages
-#consume_sqs_messages()
-# Sample News JSON (Manually Provided)
-sample_news_json = {
-    "uri": "8595920420",
-    "lang": "eng",
-    "isDuplicate": True,
-    "date": "2025-03-19",
-    "time": "02:12:59",
-    "dateTime": "2025-03-19T02:12:59Z",
-    "dateTimePub": "2025-03-18T14:43:26Z",
-    "dataType": "news",
-    "sim": 0,
-    "url": "https://www.delcotimes.com/2025/03/18/immigration-activist-detained/",
-    "title": "Woman who had sought protection from deportation in Colorado churches is detained, advocates say",
-    "body": "DENVER (AP) -- A woman who gained prominence after she took refuge in churches...",
-    "source": {
-        "uri": "delcotimes.com",
-        "dataType": "news",
-        "title": "The Delaware County Daily Times"
-    },
-    "authors": [
-        {
-            "uri": "associated_press@delcotimes.com",
-            "name": "Associated Press",
-            "type": "author",
-            "isAgency": False
-        }
-    ],
-    "image": "https://www.delcotimes.com/wp-content/uploads/2021/08/dtimes.jpg",
-    "eventUri": None,
-    "sentiment": -0.0431,
-    "wgt": 480046379,
-    "relevance": 1,
-    "city": "Denver",
-    "id": "67da36c6e891faf81adb701f",
-    "geoJson": {
-        "type": "Location",
-        "geometry": {
-            "type": "Point",
-            "coordinates": [39.7392364, -104.984862]
-        },
-        "properties": {
-            "name": "Denver"
-        }
-    }
-}
-
-# Test processing a single JSON
-processed_news = process_news(sample_news_json)
-
-# Print the processed GeoJSON
-print(json.dumps(processed_news, indent=2))
-
+if __name__ == "__main__":
+    try:
+        queue_url = get_queue_url(QUEUE_NAME)
+        consume_messages(queue_url)
+    except Exception as e:
+        logger.critical(f"Failed to start consumer: {e}")
