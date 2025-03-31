@@ -2,3 +2,4 @@ boto3
 pymongo
 python-dotenv
 requests
+beautifulsoup4
