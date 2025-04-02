@@ -1,4 +1,4 @@
-# 使用官方 Python 3.9 slim 版本作為基底映像
+# 使用官方 Python 3.9-slim 基底映像
 FROM python:3.9-slim
 
 # 設定工作目錄
@@ -8,12 +8,11 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 複製應用程式程式碼到容器中
+# 複製整個專案到容器
 COPY . .
 
-# 若有需要設定環境變數，建議在 Cloud Run 部署時設定，而非硬編碼於 Dockerfile
-# 開放預設端口（Cloud Run 預設使用 8080）
+# 開放 Cloud Run 預設使用的 8080 埠口
 EXPOSE 8080
 
-# 指定啟動指令，假設是執行 news_json.py
-CMD ["python", "news_json.py"]
+# 指定啟動指令，執行 main.py（請依您檔案名稱調整）
+CMD ["python", "main.py"]
