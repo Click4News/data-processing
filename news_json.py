@@ -15,7 +15,7 @@ mongo_uri = os.getenv("MONGO_URI")
 
 # Setup MongoDB
 client = MongoClient(mongo_uri)
-db = client["sqsMessagesDB"]
+db = client["sqsMessagesDB1"]
 collection = db["raw_messages"]
 
 # Set up logging
