@@ -1,3 +1,6 @@
+options:
+  logging: CLOUD_LOGGING_ONLY
+
 steps:
   # 1. 构建镜像并打 tag（用你自己的项目 ID）
   - name: 'gcr.io/cloud-builders/docker'
