@@ -1,15 +1,16 @@
 # cloudbuild.yaml
 
 options:
+  # 只往 Cloud Logging 写日志，避免必须指定 logs_bucket
   logging: CLOUD_LOGGING_ONLY
 
 steps:
-  # 1. 构建镜像并打 tag
+  # 1. 构建镜像并打 tag 到 us‑east1 varshitha-backend 仓库
   - name: 'gcr.io/cloud-builders/docker'
     args:
       [
         'build',
-        '-t', 'us-east2-docker.pkg.dev/jon-backend/click4news-repo/click4news-backend:$SHORT_SHA',
+        '-t', 'us-east1-docker.pkg.dev/jon-backend/varshitha-backend/click4news-backend:$SHORT_SHA',
         '.'
       ]
 
@@ -18,24 +19,23 @@ steps:
     args:
       [
         'push',
-        'us-east2-docker.pkg.dev/jon-backend/click4news-repo/click4news-backend:$SHORT_SHA'
+        'us-east1-docker.pkg.dev/jon-backend/varshitha-backend/click4news-backend:$SHORT_SHA'
       ]
 
-  # 3. 部署到 Cloud Run，并从 Secret Manager 读取大写的 MONGO_URI
+  # 3. 部署到 Cloud Run，从 Secret Manager 安全注入 MONGO_URI
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
       [
         'run', 'deploy', 'click4news-backend',
-        '--image', 'us-east2-docker.pkg.dev/jon-backend/click4news-repo/click4news-backend:$SHORT_SHA',
-        '--region', 'us-east2',
+        '--image', 'us-east1-docker.pkg.dev/jon-backend/varshitha-backend/click4news-backend:$SHORT_SHA',
+        '--region', 'us-east1',
         '--platform', 'managed',
         '--allow-unauthenticated',
         '--min-instances', '1',
-        # 使用 Secret Manager 中大写的 Secret ID
         '--update-secrets', 'MONGO_URI=projects/jon-backend/secrets/MONGO_URI:latest'
       ]
 
-# 构建产物：让 Cloud Build 记录这个镜像
+# 告诉 Cloud Build 这就是我们要记录的镜像
 images:
-  - 'us-east2-docker.pkg.dev/jon-backend/click4news-repo/click4news-backend:$SHORT_SHA'
+  - 'us-east1-docker.pkg.dev/jon-backend/varshitha-backend/click4news-backend:$SHORT_SHA'
