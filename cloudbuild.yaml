@@ -1,0 +1,36 @@
+steps:
+  # 1. 构建镜像并打 tag（用你自己的项目 ID）
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      [
+        'build',
+        '-t', 'us-east2-docker.pkg.dev/jon-backend/click4news-repo/click4news-backend:$SHORT_SHA',
+        '.'
+      ]
+
+  # 2. 推送到 Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      [
+        'push',
+        'us-east2-docker.pkg.dev/jon-backend/click4news-repo/click4news-backend:$SHORT_SHA'
+      ]
+
+  # 3. 部署到 Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      [
+        'run', 'deploy', 'click4news-backend',
+        '--image', 'us-east2-docker.pkg.dev/jon-backend/click4news-repo/click4news-backend:$SHORT_SHA',
+        '--region', 'us-east2',
+        '--platform', 'managed',
+        '--allow-unauthenticated',
+        '--min-instances', '1',
+        # 如果你有环境变量，就在这里传入
+        '--set-env-vars', 'MONGO_URI=$MONGO_URI'
+      ]
+
+# 构建产物：让 Cloud Build 记录这个镜像
+images:
+  - 'us-east2-docker.pkg.dev/jon-backend/click4news-repo/click4news-backend:$SHORT_SHA'
