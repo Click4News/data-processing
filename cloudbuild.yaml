@@ -1,11 +1,9 @@
 # cloudbuild.yaml
 
 options:
-  # 只往 Cloud Logging 写日志，避免必须指定 logs_bucket
   logging: CLOUD_LOGGING_ONLY
 
 steps:
-  # 1. 构建镜像并打 tag 到 us‑east1 varshitha-backend 仓库
   - name: 'gcr.io/cloud-builders/docker'
     args:
       [
@@ -14,7 +12,6 @@ steps:
         '.'
       ]
 
-  # 2. 推送到 Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
     args:
       [
@@ -22,7 +19,6 @@ steps:
         'us-east1-docker.pkg.dev/jon-backend/varshitha-backend/click4news-backend:$SHORT_SHA'
       ]
 
-  # 3. 部署到 Cloud Run，从 Secret Manager 安全注入 MONGO_URI
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -33,9 +29,9 @@ steps:
         '--platform', 'managed',
         '--allow-unauthenticated',
         '--min-instances', '1',
-        '--update-secrets', 'MONGO_URI=projects/jon-backend/secrets/MONGO_URI:latest'
+        # 引用小写 secret ID，后面带版本
+        '--update-secrets', 'MONGO_URI=mongo-uri:latest'
       ]
 
-# 告诉 Cloud Build 这就是我们要记录的镜像
 images:
   - 'us-east1-docker.pkg.dev/jon-backend/varshitha-backend/click4news-backend:$SHORT_SHA'
