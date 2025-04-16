@@ -4,33 +4,37 @@ options:
 steps:
   - name: 'gcr.io/cloud-builders/docker'
     args:
-      [
-        'build',
-        '-t', 'us-east1-docker.pkg.dev/jon-backend/varshitha-backend/click4news-backend:$SHORT_SHA',
-        '.'
-      ]
+      - 'build'
+      - '-t'
+      - 'us-east1-docker.pkg.dev/jon-backend/varshitha-backend/click4news-backend:$SHORT_SHA'
+      - '.'
 
   - name: 'gcr.io/cloud-builders/docker'
     args:
-      [
-        'push',
-        'us-east1-docker.pkg.dev/jon-backend/varshitha-backend/click4news-backend:$SHORT_SHA'
-      ]
+      - 'push'
+      - 'us-east1-docker.pkg.dev/jon-backend/varshitha-backend/click4news-backend:$SHORT_SHA'
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
-      [
-        'run', 'deploy', 'varshitha',  # ← 这里改成你的服务名
-        '--image', 'us-east1-docker.pkg.dev/jon-backend/varshitha-backend/click4news-backend:$SHORT_SHA',
-        '--region', 'us-east1',
-        '--platform', 'managed',
-        '--allow-unauthenticated',
-        '--min-instances', '1',
-        '--memory', '2Gi',
-        '--timeout', '300s',
-        '--update-secrets', 'MONGO_URI=mongo-uri:latest'
-      ]
+      - 'run'
+      - 'deploy'
+      - 'varshitha'
+      - '--image'
+      - 'us-east1-docker.pkg.dev/jon-backend/varshitha-backend/click4news-backend:$SHORT_SHA'
+      - '--region'
+      - 'us-east1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--min-instances'
+      - '1'
+      - '--memory'
+      - '4Gi'
+      - '--timeout'
+      - '600s'
+      - '--update-secrets'
+      - 'MONGO_URI=mongo-uri:latest'
 
 images:
   - 'us-east1-docker.pkg.dev/jon-backend/varshitha-backend/click4news-backend:$SHORT_SHA'
