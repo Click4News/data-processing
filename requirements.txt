@@ -1,5 +1,6 @@
 fastapi
 uvicorn[standard]
+APScheduler
 boto3
 pymongo
 python-dotenv
