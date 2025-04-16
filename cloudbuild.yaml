@@ -27,6 +27,7 @@ steps:
         '--platform', 'managed',
         '--allow-unauthenticated',
         '--min-instances', '1',
+        '--memory', '2Gi',
         '--timeout', '300s',
         '--update-secrets', 'MONGO_URI=mongo-uri:latest'
       ]
