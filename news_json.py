@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 import os
 from news_summary import  summarize_article, classify_news, translate_to_english
 from langdetect import detect, LangDetectException
-
+from urllib.parse import urlparse
 # Load environment variables from .env
 load_dotenv()
 mongo_uri = os.getenv("MONGO_URI")
@@ -17,6 +17,7 @@ mongo_uri = os.getenv("MONGO_URI")
 client = MongoClient(mongo_uri)
 db = client["sqsMessagesDB1"]
 collection = db["raw_messages"]
+users_collection = db["users"]
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -55,6 +56,79 @@ def process_message(message):
             # If double-encoded (string inside string), decode again
             if isinstance(body_json, str):
                 body_json = json.loads(body_json)
+                news_type = body_json.get("type", "CREATE").upper()
+                news_userid = body_json.get("userid")
+                if not news_userid:
+                    # fallback: infer from domain
+                    parsed_url = urlparse(body_json.get("url", ""))
+                    domain = parsed_url.netloc  # e.g. "www.nytimes.com"
+                    if domain.startswith("www."):
+                        domain = domain[4:]  # remove 'www.'
+
+                    news_userid = domain.split(".")[0]  # "nytimes"
+                    body_json["userid"] = news_userid
+                if news_type == "CREATE":
+                    import random
+                    body_json["likes"] = random.randint(10, 20)
+                    body_json["fakeflags"] = random.randint(0, 5)
+                    body_json["userid"] = news_userid  # Ensure userid exists
+
+                elif news_type in ["LIKED", "FAKEFLAGGED"]:
+                    message_id = body_json.get("message_id")
+                    actor_userid = body_json.get("userid")  # the liker or flagger
+
+                    # Step 1: Fetch the news article
+                    news_doc = collection.find_one({
+                        "features.properties.message_id": message_id
+                    })
+
+                    if not news_doc:
+                        logger.warning(f"News with message_id {message_id} not found.")
+                        return "skip", receipt_handle
+
+                    props = news_doc["features"][0]["properties"]
+                    owner_userid = props.get("userid", "unknown")
+                    likes = props.get("likes", 0)
+                    fakeflags = props.get("fakeflags", 0)
+
+                    # Step 2: Get actor credibility (default 50)
+                    actor_doc = users_collection.find_one({"userid": actor_userid})
+                    actor_cred = actor_doc.get("credibility_score", 50) if actor_doc else 50
+
+                    # Step 3: Determine update based on type
+                    if news_type == "LIKED":
+                        likes += 1
+                        collection.update_one(
+                            {"features.properties.message_id": message_id},
+                            {"$set": {"features.0.properties.likes": likes}}
+                        )
+
+                        boost = (0.4 * actor_cred + 0.3 * likes - 0.5 * fakeflags) / 2
+
+                    elif news_type == "FAKEFLAGGED":
+                        fakeflags += 1
+                        collection.update_one(
+                            {"features.properties.message_id": message_id},
+                            {"$set": {"features.0.properties.fakeflags": fakeflags}}
+                        )
+
+                        boost = (-0.3 * actor_cred - 0.4 * fakeflags + 0.2 * likes) / 2  # Negative boost
+
+                    # Step 4: Update owner's credibility
+                    owner_doc = users_collection.find_one({"userid": owner_userid})
+                    owner_score = owner_doc.get("credibility_score", 50) if owner_doc else 50
+                    new_score = max(0, min(100, owner_score + boost))
+
+                    users_collection.update_one(
+                        {"userid": owner_userid},
+                        {"$set": {"credibility_score": new_score}},
+                        upsert=True
+                    )
+
+                    logger.info(f"{news_type} → Updated credibility of {owner_userid} to {new_score}")
+                    return "skip", receipt_handle
+
+                # Now fallback to normal processing (CREATE case)
         except json.JSONDecodeError:
             logger.warning(f"Skipping non-JSON message: {message_id}")
             return "skip", receipt_handle
@@ -86,7 +160,6 @@ def process_message(message):
 
         # Validate coordinates
         if not coordinates or not isinstance(coordinates, list) or len(coordinates) != 2:
-            logger.warning(f"Skipping message {message_id} due to missing or invalid coordinates.")
             return "skip", receipt_handle
 
         # Validate URL
