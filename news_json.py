@@ -67,13 +67,13 @@ def process_message(message):
 
                     news_userid = domain.split(".")[0]  # "nytimes"
                     body_json["userid"] = news_userid
-                if news_type == "CREATE":
-                    import random
-                    body_json["likes"] = random.randint(10, 20)
-                    body_json["fakeflags"] = random.randint(0, 5)
-                    body_json["userid"] = news_userid  # Ensure userid exists
 
-                elif news_type in ["LIKED", "FAKEFLAGGED"]:
+                import random
+                body_json["likes"] = random.randint(10, 20)
+                body_json["fakeflags"] = random.randint(0, 5)
+                body_json["userid"] = news_userid  # Ensure userid exists
+
+                if news_type in ["LIKED", "FAKEFLAGGED"]:
                     message_id = body_json.get("message_id")
                     actor_userid = body_json.get("userid")  # the liker or flagger
 
