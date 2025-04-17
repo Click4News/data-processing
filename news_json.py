@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 import os
 from news_summary import  summarize_article, classify_news, translate_to_english
 from langdetect import detect, LangDetectException
-
+from urllib.parse import urlparse
 # Load environment variables from .env
 load_dotenv()
 mongo_uri = os.getenv("MONGO_URI")
@@ -57,8 +57,16 @@ def process_message(message):
             if isinstance(body_json, str):
                 body_json = json.loads(body_json)
                 news_type = body_json.get("type", "CREATE").upper()
-                news_userid = body_json.get("userid", "unknown")
+                news_userid = body_json.get("userid")
+                if not news_userid:
+                    # fallback: infer from domain
+                    parsed_url = urlparse(body_json.get("url", ""))
+                    domain = parsed_url.netloc  # e.g. "www.nytimes.com"
+                    if domain.startswith("www."):
+                        domain = domain[4:]  # remove 'www.'
 
+                    news_userid = domain.split(".")[0]  # "nytimes"
+                    body_json["userid"] = news_userid
                 if news_type == "CREATE":
                     import random
                     body_json["likes"] = random.randint(10, 20)
@@ -152,7 +160,6 @@ def process_message(message):
 
         # Validate coordinates
         if not coordinates or not isinstance(coordinates, list) or len(coordinates) != 2:
-            logger.warning(f"Skipping message {message_id} due to missing or invalid coordinates.")
             return "skip", receipt_handle
 
         # Validate URL
