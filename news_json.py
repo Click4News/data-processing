@@ -50,90 +50,81 @@ def process_message(message):
         body = message.get('Body', '{}')
         logger.info(f"Raw message body: {body}")
 
-        # Attempt first decode
+        # Step 1: Load JSON (single or double-decoded)
         try:
             body_json = json.loads(body)
-            # If double-encoded (string inside string), decode again
-            if isinstance(body_json, str):
+            if isinstance(body_json, str):  # Double encoded
                 body_json = json.loads(body_json)
-                news_type = body_json.get("type", "CREATE").upper()
-                news_userid = body_json.get("userid")
-                if not news_userid:
-                    # fallback: infer from domain
-                    parsed_url = urlparse(body_json.get("url", ""))
-                    domain = parsed_url.netloc  # e.g. "www.nytimes.com"
-                    if domain.startswith("www."):
-                        domain = domain[4:]  # remove 'www.'
-
-                    news_userid = domain.split(".")[0]  # "nytimes"
-                    body_json["userid"] = news_userid
-
-                import random
-                body_json["likes"] = random.randint(10, 20)
-                body_json["fakeflags"] = random.randint(0, 5)
-                body_json["userid"] = news_userid  # Ensure userid exists
-
-                if news_type in ["LIKED", "FAKEFLAGGED"]:
-                    message_id = body_json.get("message_id")
-                    actor_userid = body_json.get("userid")  # the liker or flagger
-
-                    # Step 1: Fetch the news article
-                    news_doc = collection.find_one({
-                        "features.properties.message_id": message_id
-                    })
-
-                    if not news_doc:
-                        logger.warning(f"News with message_id {message_id} not found.")
-                        return "skip", receipt_handle
-
-                    props = news_doc["features"][0]["properties"]
-                    owner_userid = props.get("userid", "unknown")
-                    likes = props.get("likes", 0)
-                    fakeflags = props.get("fakeflags", 0)
-
-                    # Step 2: Get actor credibility (default 50)
-                    actor_doc = users_collection.find_one({"userid": actor_userid})
-                    actor_cred = actor_doc.get("credibility_score", 50) if actor_doc else 50
-
-                    # Step 3: Determine update based on type
-                    if news_type == "LIKED":
-                        likes += 1
-                        collection.update_one(
-                            {"features.properties.message_id": message_id},
-                            {"$set": {"features.0.properties.likes": likes}}
-                        )
-
-                        boost = (0.4 * actor_cred + 0.3 * likes - 0.5 * fakeflags) / 2
-
-                    elif news_type == "FAKEFLAGGED":
-                        fakeflags += 1
-                        collection.update_one(
-                            {"features.properties.message_id": message_id},
-                            {"$set": {"features.0.properties.fakeflags": fakeflags}}
-                        )
-
-                        boost = (-0.3 * actor_cred - 0.4 * fakeflags + 0.2 * likes) / 2  # Negative boost
-
-                    # Step 4: Update owner's credibility
-                    owner_doc = users_collection.find_one({"userid": owner_userid})
-                    owner_score = owner_doc.get("credibility_score", 50) if owner_doc else 50
-                    new_score = max(0, min(100, owner_score + boost))
-
-                    users_collection.update_one(
-                        {"userid": owner_userid},
-                        {"$set": {"credibility_score": new_score}},
-                        upsert=True
-                    )
-
-                    logger.info(f"{news_type} → Updated credibility of {owner_userid} to {new_score}")
-                    return "skip", receipt_handle
-
-                # Now fallback to normal processing (CREATE case)
         except json.JSONDecodeError:
             logger.warning(f"Skipping non-JSON message: {message_id}")
             return "skip", receipt_handle
 
-        # If 'articles' exists and is a list, extract the first article
+        # Step 2: Check if LIKED/FAKEFLAGGED (and not CREATE)
+        news_type = body_json.get("type", "CREATE").upper()
+
+        if news_type in ["LIKED", "FAKEFLAGGED"]:
+            message_id = body_json.get("message_id")
+            actor_userid = body_json.get("userid")
+
+            news_doc = collection.find_one({
+                "features.properties.message_id": message_id
+            })
+
+            if not news_doc:
+                logger.warning(f"News with message_id {message_id} not found.")
+                return "skip", receipt_handle
+
+            props = news_doc["features"][0]["properties"]
+            owner_userid = props.get("userid", "unknown")
+            likes = props.get("likes", 0)
+            fakeflags = props.get("fakeflags", 0)
+
+            actor_doc = users_collection.find_one({"userid": actor_userid})
+            actor_cred = actor_doc.get("credibility_score", 50) if actor_doc else 50
+
+            if news_type == "LIKED":
+                likes += 1
+                collection.update_one(
+                    {"features.properties.message_id": message_id},
+                    {"$set": {"features.0.properties.likes": likes}}
+                )
+                boost = (0.4 * actor_cred + 0.3 * likes - 0.5 * fakeflags) / 2
+            else:  # FAKEFLAGGED
+                fakeflags += 1
+                collection.update_one(
+                    {"features.properties.message_id": message_id},
+                    {"$set": {"features.0.properties.fakeflags": fakeflags}}
+                )
+                boost = (-0.3 * actor_cred - 0.4 * fakeflags + 0.2 * likes) / 2
+
+            owner_doc = users_collection.find_one({"userid": owner_userid})
+            owner_score = owner_doc.get("credibility_score", 50) if owner_doc else 50
+            new_score = max(0, min(100, owner_score + boost))
+
+            users_collection.update_one(
+                {"userid": owner_userid},
+                {"$set": {"credibility_score": new_score}},
+                upsert=True
+            )
+
+            logger.info(f"{news_type} → Updated credibility of {owner_userid} to {new_score}")
+            return "skip", receipt_handle
+
+        # Step 3: Enrich only CREATE type with userid, likes, fakeflags
+        if news_type == "CREATE":
+            news_userid = body_json.get("userid")
+            if not news_userid:
+                parsed_url = urlparse(body_json.get("url", ""))
+                domain = parsed_url.netloc
+                if domain.startswith("www."):
+                    domain = domain[4:]
+                news_userid = domain.split(".")[0]
+            body_json["userid"] = news_userid
+            import random
+            body_json["likes"] = random.randint(10, 20)
+            body_json["fakeflags"] = random.randint(0, 5)
+
+        # Step 4: Fallback to normal CREATE processing
         if "articles" in body_json and isinstance(body_json["articles"], list) and len(body_json["articles"]) > 0:
             body_json = body_json["articles"][0]
 
@@ -147,10 +138,11 @@ def process_message(message):
                     logger.warning(f"Message {message_id} skipped due to title translation failure.")
                     return "skip", receipt_handle
             else:
-                title = raw_title  # Skip translation if already English
+                title = raw_title
         except LangDetectException:
             logger.warning(f"Could not detect language for title: {raw_title}. Skipping message.")
             return "skip", receipt_handle
+
         url = body_json.get("url")
         coordinates = (
             body_json.get("geoJson", {})
@@ -158,125 +150,31 @@ def process_message(message):
             .get("coordinates", None)
         )
 
-        # Validate coordinates
         if not coordinates or not isinstance(coordinates, list) or len(coordinates) != 2:
             return "skip", receipt_handle
 
-        # Validate URL
         if not url or not isinstance(url, str) or not url.startswith("http"):
             logger.warning(f"Message {message_id} skipped due to missing or invalid URL.")
             return "skip", receipt_handle
 
-        # Extract or fallback to full body text
         extracted_text = body_json.get("body", "")
         if not extracted_text or len(extracted_text.strip()) < 20:
             logger.warning(f"Message {message_id} skipped due to empty or too short article body.")
             return "skip", receipt_handle
 
-        # Translate
         translated_text = translate_to_english(extracted_text)
         if not translated_text or "translation unavailable" in translated_text.lower():
             logger.warning(f"Message {message_id} skipped due to translation failure.")
             return "skip", receipt_handle
 
-        # Summarize
         summary = summarize_article(translated_text)
         if not summary or "summary unavailable" in summary.lower() or "failed to extract" in summary.lower():
             logger.warning(f"Message {message_id} skipped due to summarization failure.")
             return "skip", receipt_handle
 
-        # Classify
         category = classify_news(summary)
-
-        # Get additional metadata
         attributes = message.get('MessageAttributes', {})
         attribute_values = {k: v.get('StringValue') for k, v in attributes.items()}
-
-        # Prepare GeoJSON object
-        geojson_news = {
-            "type": "FeatureCollection",
-            "features": [
-                {
-                    "type": "Feature",
-                    "geometry": {
-                        "type": "Point",
-                        "coordinates": coordinates
-                    },
-                    "properties": {
-                        "density": 5,
-                        "message_id": message_id,
-                        "title": title,
-                        "summary": summary,
-                        "link": url,
-                        "category": category,
-                        "attributes": attribute_values,
-                        "timestamp": time.time()
-                    }
-                }
-            ]
-        }
-
-        collection.insert_one(geojson_news)
-        logger.info(f"Stored message {message_id} in MongoDB")
-
-        return geojson_news, receipt_handle
-
-    except Exception as e:
-        logger.error(f"Error processing message {message_id}: {e}")
-        return None, receipt_handle
-    message_id = message.get('MessageId', 'unknown')
-    receipt_handle = message.get('ReceiptHandle')
-
-    try:
-        body = message.get('Body', '{}')
-        attributes = message.get('MessageAttributes', {})
-        attribute_values = {k: v.get('StringValue') for k, v in attributes.items()}
-
-        try:
-            body_json = json.loads(body)
-            logger.info(f"Processing JSON message: {message_id}")
-        except json.JSONDecodeError:
-            logger.warning(f"Skipping non-JSON message: {message_id}")
-            return None, receipt_handle
-
-        title = body_json.get("title", "Untitled News")
-        url = body_json.get("url")
-        coordinates = (
-    body_json.get("geoJson", {})
-    .get("geometry", {})
-    .get("coordinates", None)
-)
-
-
-        # Validate coordinates
-        if not coordinates or not isinstance(coordinates, list) or len(coordinates) != 2:
-            logger.warning(f"Skipping message {message_id} due to missing or invalid coordinates.")
-            return None, receipt_handle
-
-        # Skip messages without a valid URL
-        if not url or not isinstance(url, str) or not url.startswith("http"):
-            logger.warning(f"Message {message_id} skipped due to missing or invalid URL.")
-            return None, receipt_handle
-
-        extracted_text = body_json.get("body", "")
-        if not extracted_text or len(extracted_text.strip()) < 20:
-            logger.warning(f"Message {message_id} skipped due to empty or too short article body.")
-            return None, receipt_handle
-
-
-        translated_text = translate_to_english(extracted_text)
-
-        if not translated_text or "translation unavailable" in translated_text.lower():
-            logger.warning(f"Message {message_id} skipped due to translation failure.")
-            return None, receipt_handle
-
-        summary = summarize_article(translated_text)
-
-        if not summary or "summary unavailable" in summary.lower() or "failed to extract" in summary.lower():
-            logger.warning(f"Message {message_id} skipped due to summarization failure.")
-            return None, receipt_handle
-
-        category = classify_news(summary)
 
         geojson_news = {
             "type": "FeatureCollection",
@@ -295,12 +193,15 @@ def process_message(message):
                         "link": url,
                         "category": category,
                         "attributes": attribute_values,
-                        "timestamp": time.time()
+                        "timestamp": time.time(),
+                        "userid": body_json.get("userid"),
+                        "likes": body_json.get("likes", 0),
+                        "fakeflags": body_json.get("fakeflags", 0)
                     }
                 }
             ]
         }
-
+        print(json.dumps(geojson_news, indent=2))  # Pretty-prints the JSON in your terminal
         collection.insert_one(geojson_news)
         logger.info(f"Stored message {message_id} in MongoDB")
 
@@ -309,7 +210,6 @@ def process_message(message):
     except Exception as e:
         logger.error(f"Error processing message {message_id}: {e}")
         return None, receipt_handle
-
 
 def delete_message(queue_url, receipt_handle):
     region_name = 'us-east-2'
