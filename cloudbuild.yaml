@@ -7,16 +7,16 @@ steps:
     args:
       - 'build'
       - '-t'
-      - 'us-east1-docker.pkg.dev/jon-backend/varshitha-backend/click4news-backend:$SHORT_SHA'
+      - 'us-east1-docker.pkg.dev/jon-backend/data-processing/click4news-backend:$SHORT_SHA'
       - '.'
 
   # 2. 推到 Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
-      - 'us-east1-docker.pkg.dev/jon-backend/varshitha-backend/click4news-backend:$SHORT_SHA'
+      - 'us-east1-docker.pkg.dev/jon-backend/data-processing/click4news-backend:$SHORT_SHA'
 
-  # 3. 部署到 Cloud Run（2 vCPU + 8 GiB）
+  # 3. 部署到 Cloud Run（4 vCPU + 16 GiB）
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -24,7 +24,7 @@ steps:
       - 'deploy'
       - 'varshitha'
       - '--image'
-      - 'us-east1-docker.pkg.dev/jon-backend/varshitha-backend/click4news-backend:$SHORT_SHA'
+      - 'us-east1-docker.pkg.dev/jon-backend/data-processing/click4news-backend:$SHORT_SHA'
       - '--region'
       - 'us-east1'
       - '--platform'
@@ -42,4 +42,4 @@ steps:
       - 'MONGO_URI=mongo-uri:latest'
 
 images:
-  - 'us-east1-docker.pkg.dev/jon-backend/varshitha-backend/click4news-backend:$SHORT_SHA'
+  - 'us-east1-docker.pkg.dev/jon-backend/data-processing/click4news-backend:$SHORT_SHA'
