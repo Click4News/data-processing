@@ -9,8 +9,25 @@ import os
 from news_summary import  summarize_article, classify_news, translate_to_english
 from langdetect import detect, LangDetectException
 from urllib.parse import urlparse
+
+
+
+def get_secret(project_id: str, secret_id: str, version_id: str = "latest") -> str:
+    """
+    从 Google Secret Manager 里拿到明文字符串
+    """
+    client = secretmanager.SecretManagerServiceClient()
+    name = f"projects/{project_id}/secrets/{secret_id}/versions/{version_id}"
+    response = client.access_secret_version(request={"name": name})
+    return response.payload.data.decode("utf-8")
+
+# 用你的 GCP 项目 ID 和 Secret 名替换下面这两行
+PROJECT_ID = "jon-backend"
+SECRET_NAME = "MONGO_URI"
+
+mongo_uri = get_secret(PROJECT_ID, SECRET_NAME)
 # Load environment variables from .env
-load_dotenv()
+#load_dotenv()
 mongo_uri = os.getenv("MONGO_URI")
 
 # Setup MongoDB
