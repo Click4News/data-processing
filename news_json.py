@@ -9,6 +9,7 @@ import os
 from news_summary import  summarize_article, classify_news, translate_to_english
 from langdetect import detect, LangDetectException
 from urllib.parse import urlparse
+from google.cloud import secretmanager
 
 
 
