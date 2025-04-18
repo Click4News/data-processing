@@ -9,3 +9,4 @@ beautifulsoup4
 transformers
 torch
 validators
+google-cloud-secret-manager
