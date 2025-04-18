@@ -2,6 +2,7 @@ options:
   logging: CLOUD_LOGGING_ONLY
 
 steps:
+  # 1. Build 镜像
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
@@ -9,11 +10,13 @@ steps:
       - 'us-east1-docker.pkg.dev/jon-backend/varshitha-backend/click4news-backend:$SHORT_SHA'
       - '.'
 
+  # 2. 推到 Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
       - 'us-east1-docker.pkg.dev/jon-backend/varshitha-backend/click4news-backend:$SHORT_SHA'
 
+  # 3. 部署到 Cloud Run（2 vCPU + 8 GiB）
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -29,8 +32,10 @@ steps:
       - '--allow-unauthenticated'
       - '--min-instances'
       - '1'
+      - '--cpu'
+      - '4'
       - '--memory'
-      - '4Gi'
+      - '16Gi'
       - '--timeout'
       - '600s'
       - '--update-secrets'

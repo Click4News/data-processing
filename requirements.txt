@@ -9,3 +9,8 @@ beautifulsoup4
 transformers
 torch
 validators
+google-cloud-secret-manager
+sentencepiece
+sacremoses
+hf_xet
+langdetect
