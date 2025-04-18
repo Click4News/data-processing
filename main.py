@@ -14,24 +14,39 @@ app = FastAPI()
 scheduler = BackgroundScheduler()
 logging.basicConfig(level=logging.INFO)
 
-# ✅ Wrapper to call your existing function with arguments
+
 def scheduled_consumer():
     try:
-        consume_messages(queue_name="test-queue", max_messages=5, wait_time=5, visibility_timeout=30)
+        logging.info("Running scheduled SQS consumer...")
+        consume_messages(
+            queue_name="test-queue",
+            max_messages=20,
+            wait_time=0,           
+            visibility_timeout=30
+        )
     except Exception as e:
         logging.error(f"Scheduled consumer failed: {e}")
 
+
 @app.on_event("startup")
 def start_scheduler():
-    logging.info("Starting background scheduler...")
-    scheduler.add_job(scheduled_consumer, 'interval', minutes=2, id='news-consumer-job', replace_existing=True)
+    logging.info("Starting scheduler to run every 1 minute...")
+    scheduler.add_job(
+        scheduled_consumer,
+        trigger='interval',
+        minutes=1,
+        id='news-consumer-job',
+        replace_existing=True
+    )
     scheduler.start()
+
 
 @app.on_event("shutdown")
 def shutdown_scheduler():
     logging.info("Shutting down scheduler...")
     scheduler.shutdown()
 
+
 @app.get("/")
 def health_check():
-    return {"message": "FastAPI scheduler is running and using your consume_messages() function!"}
+    return {"message": "FastAPI scheduler is running and polling SQS every 1 minute!"}

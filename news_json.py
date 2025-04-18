@@ -68,7 +68,6 @@ def process_message(message):
         body = message.get('Body', '{}')
         logger.info(f"Raw message body: {body}")
 
-        # Step 1: Load JSON (single or double-decoded)
         try:
             body_json = json.loads(body)
             if isinstance(body_json, str):  # Double encoded
@@ -243,52 +242,44 @@ def delete_message(queue_url, receipt_handle):
         return False
 
 
-def consume_messages(queue_name, max_messages=10, wait_time=20, visibility_timeout=30):
+def consume_messages(queue_name, max_messages=10, wait_time=0, visibility_timeout=30):
     queue_url = get_queue_url(queue_name)
     logger.info(f"Consuming messages from {queue_name}")
 
     region_name = 'us-east-2'
     sqs = boto3.client('sqs', region_name=region_name)
 
-    while True:
-        try:
-            response = sqs.receive_message(
-                QueueUrl=queue_url,
-                MaxNumberOfMessages=max_messages,
-                WaitTimeSeconds=wait_time,
-                VisibilityTimeout=visibility_timeout,
-                MessageAttributeNames=['All']
-            )
+    try:
+        response = sqs.receive_message(
+            QueueUrl=queue_url,
+            MaxNumberOfMessages=max_messages,
+            WaitTimeSeconds=wait_time,  # 0 for quick Cloud Run responses
+            VisibilityTimeout=visibility_timeout,
+            MessageAttributeNames=['All']
+        )
 
-            messages = response.get('Messages', [])
-            if not messages:
-                logger.info("No messages received. Continuing to poll...")
-                continue
+        messages = response.get('Messages', [])
+        if not messages:
+            logger.info("No messages received.")
+            return
 
-            logger.info(f"Received {len(messages)} messages")
+        logger.info(f"Received {len(messages)} messages")
 
-            for message in messages:
-                geojson_result, receipt_handle = process_message(message)
-                if receipt_handle:
-                    if geojson_result:  # processed and valid
-                         deleted = delete_message(queue_url, receipt_handle)
-                    elif geojson_result == "skip":  # non-JSON or intentionally skipped
-                        deleted = delete_message(queue_url, receipt_handle)
+        for message in messages:
+            geojson_result, receipt_handle = process_message(message)
+            if receipt_handle:
+                if geojson_result:  # processed and valid
+                    deleted = delete_message(queue_url, receipt_handle)
+                elif geojson_result == "skip":  # intentionally skipped
+                    deleted = delete_message(queue_url, receipt_handle)
 
                 if deleted:
                     logger.info(f"Deleted message {message.get('MessageId')}")
                 else:
                     logger.warning(f"Failed to delete message {message.get('MessageId')}")
 
-
-
-        except KeyboardInterrupt:
-            logger.info("Stopping consumer...")
-            break
-
-        except Exception as e:
-            logger.error(f"Error in message consumption loop: {e}")
-            time.sleep(5)
+    except Exception as e:
+        logger.error(f"Error in message consumption: {e}")
 
 
 if __name__ == "__main__":
