@@ -13,3 +13,4 @@ google-cloud-secret-manager
 sentencepiece
 sacremoses
 hf_xet
+langdetect
