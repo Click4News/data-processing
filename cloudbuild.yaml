@@ -30,7 +30,7 @@ steps:
       - '--min-instances'
       - '1'
       - '--memory'
-      - '4Gi'
+      - '8Gi'
       - '--timeout'
       - '600s'
       - '--update-secrets'
