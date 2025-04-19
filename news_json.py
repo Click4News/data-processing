@@ -36,35 +36,7 @@ client = MongoClient(mongo_uri)
 db = client["sqsMessagesDB1"]
 collection = db["raw_messages"]
 users_collection = db["users"]
-def update_user_stats(owner_userid):
-    # Count total articles created by user
-    total_articles = collection.count_documents({
-        "features.0.properties.userid": owner_userid
-    })
 
-    # Aggregate total likes and fake flags received across all articles
-    pipeline = [
-        {"$match": {"features.0.properties.userid": owner_userid}},
-        {"$group": {
-            "_id": None,
-            "total_likes": {"$sum": "$features.0.properties.likes"},
-            "total_fakeflags": {"$sum": "$features.0.properties.fakeflags"}
-        }}
-    ]
-    result = list(collection.aggregate(pipeline))
-    total_likes = result[0]["total_likes"] if result else 0
-    total_fakeflags = result[0]["total_fakeflags"] if result else 0
-
-    # Update the user profile with latest stats
-    users_collection.update_one(
-        {"userid": owner_userid},
-        {"$set": {
-            "total_articles": total_articles,
-            "total_likes_received": total_likes,
-            "total_fakeflags_received": total_fakeflags
-        }},
-        upsert=True
-    )
 # Set up logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -133,12 +105,22 @@ def process_message(message):
                     {"features.properties.message_id": message_id},
                     {"$set": {"features.0.properties.likes": likes}}
                 )
+                users_collection.update_one(
+                    {"userid": owner_userid},
+                    {"$inc": {"total_likes_received": 1}},
+                    upsert=True
+                )
                 boost = (0.4 * actor_cred + 0.3 * likes - 0.5 * fakeflags) / 2
             else:  # FAKEFLAGGED
                 fakeflags += 1
                 collection.update_one(
                     {"features.properties.message_id": message_id},
                     {"$set": {"features.0.properties.fakeflags": fakeflags}}
+                )
+                users_collection.update_one(
+                    {"userid": owner_userid},
+                    {"$inc": {"total_fakeflags_received": 1}},
+                    upsert=True
                 )
                 boost = (-0.3 * actor_cred - 0.4 * fakeflags + 0.2 * likes) / 2
 
@@ -151,8 +133,6 @@ def process_message(message):
                 {"$set": {"credibility_score": new_score}},
                 upsert=True
             )
-
-            update_user_stats(owner_userid)
 
             logger.info(f"{news_type} → Updated credibility of {owner_userid} to {new_score}")
             return "skip", receipt_handle
@@ -251,7 +231,11 @@ def process_message(message):
         print(json.dumps(geojson_news, indent=2))  # Pretty-prints the JSON in your terminal
         collection.insert_one(geojson_news)
         logger.info(f"Stored message {message_id} in MongoDB")
-
+        users_collection.update_one(
+            {"userid": body_json["userid"]},
+            {"$inc": {"total_articles": 1}},
+            upsert=True
+        )
         return geojson_news, receipt_handle
 
     except Exception as e:
