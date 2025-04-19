@@ -105,12 +105,22 @@ def process_message(message):
                     {"features.properties.message_id": message_id},
                     {"$set": {"features.0.properties.likes": likes}}
                 )
+                users_collection.update_one(
+                    {"userid": owner_userid},
+                    {"$inc": {"total_likes_received": 1}},
+                    upsert=True
+                )
                 boost = (0.4 * actor_cred + 0.3 * likes - 0.5 * fakeflags) / 2
             else:  # FAKEFLAGGED
                 fakeflags += 1
                 collection.update_one(
                     {"features.properties.message_id": message_id},
                     {"$set": {"features.0.properties.fakeflags": fakeflags}}
+                )
+                users_collection.update_one(
+                    {"userid": owner_userid},
+                    {"$inc": {"total_fakeflags_received": 1}},
+                    upsert=True
                 )
                 boost = (-0.3 * actor_cred - 0.4 * fakeflags + 0.2 * likes) / 2
 
@@ -221,7 +231,11 @@ def process_message(message):
         print(json.dumps(geojson_news, indent=2))  # Pretty-prints the JSON in your terminal
         collection.insert_one(geojson_news)
         logger.info(f"Stored message {message_id} in MongoDB")
-
+        users_collection.update_one(
+            {"userid": body_json["userid"]},
+            {"$inc": {"total_articles": 1}},
+            upsert=True
+        )
         return geojson_news, receipt_handle
 
     except Exception as e:
