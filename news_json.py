@@ -9,26 +9,8 @@ import os
 from news_summary import  summarize_article, classify_news, translate_to_english
 from langdetect import detect, LangDetectException
 from urllib.parse import urlparse
-from google.cloud import secretmanager
-
-
-
-def get_secret(project_id: str, secret_id: str, version_id: str = "latest") -> str:
-    """
-    从 Google Secret Manager 里拿到明文字符串
-    """
-    client = secretmanager.SecretManagerServiceClient()
-    name = f"projects/{project_id}/secrets/{secret_id}/versions/{version_id}"
-    response = client.access_secret_version(request={"name": name})
-    return response.payload.data.decode("utf-8")
-
-# 用你的 GCP 项目 ID 和 Secret 名替换下面这两行
-PROJECT_ID = "jon-backend"
-SECRET_NAME = "MONGO_URI"
-
-mongo_uri = get_secret(PROJECT_ID, SECRET_NAME)
 # Load environment variables from .env
-#load_dotenv()
+load_dotenv()
 mongo_uri = os.getenv("MONGO_URI")
 
 # Setup MongoDB
@@ -166,6 +148,8 @@ def process_message(message):
                     return "skip", receipt_handle
             else:
                 title = raw_title
+                logger.info(f"Processing news article: {title}")
+
         except LangDetectException:
             logger.warning(f"Could not detect language for title: {raw_title}. Skipping message.")
             return "skip", receipt_handle
@@ -199,7 +183,17 @@ def process_message(message):
             logger.warning(f"Message {message_id} skipped due to summarization failure.")
             return "skip", receipt_handle
 
-        category = classify_news(summary)
+        category = body_json.get("category", "")
+        if category.lower() == "user-generated":
+            category = "User-Generated"
+            body_json["likes"] = 0
+            body_json["fakeflags"] = 0
+            logger.info(f"Skipping classification — user provided category: {category}. Set likes and fakeflags to 0.")
+        else:
+            category = classify_news(summary)
+            logger.info(f"Auto-classified news as: {category}")
+
+
         attributes = message.get('MessageAttributes', {})
         attribute_values = {k: v.get('StringValue') for k, v in attributes.items()}
 
@@ -256,44 +250,46 @@ def delete_message(queue_url, receipt_handle):
         return False
 
 
-def consume_messages(queue_name, max_messages=10, wait_time=0, visibility_timeout=30):
+def consume_messages(queue_name, max_messages=10, wait_time=0, visibility_timeout=30, poll_interval=1):
     queue_url = get_queue_url(queue_name)
-    logger.info(f"Consuming messages from {queue_name}")
+    logger.info(f"Starting real-time message consumption from {queue_name}")
 
     region_name = 'us-east-2'
     sqs = boto3.client('sqs', region_name=region_name)
 
-    try:
-        response = sqs.receive_message(
-            QueueUrl=queue_url,
-            MaxNumberOfMessages=max_messages,
-            WaitTimeSeconds=wait_time,  # 0 for quick Cloud Run responses
-            VisibilityTimeout=visibility_timeout,
-            MessageAttributeNames=['All']
-        )
+    while True:
+        try:
+            response = sqs.receive_message(
+                QueueUrl=queue_url,
+                MaxNumberOfMessages=max_messages,
+                WaitTimeSeconds=wait_time,
+                VisibilityTimeout=visibility_timeout,
+                MessageAttributeNames=['All']
+            )
 
-        messages = response.get('Messages', [])
-        if not messages:
-            logger.info("No messages received.")
-            return
+            messages = response.get('Messages', [])
+            if messages:
+                logger.info(f"Received {len(messages)} messages")
+                for message in messages:
+                    geojson_result, receipt_handle = process_message(message)
+                    if receipt_handle:
+                        if geojson_result or geojson_result == "skip":
+                            deleted = delete_message(queue_url, receipt_handle)
+                            if deleted:
+                                logger.info(f"Deleted message {message.get('MessageId')}")
+                            else:
+                                logger.warning(f"Failed to delete message {message.get('MessageId')}")
+            else:
+                logger.debug("No messages found.")
 
-        logger.info(f"Received {len(messages)} messages")
+            time.sleep(poll_interval)  # prevent excessive API calls
 
-        for message in messages:
-            geojson_result, receipt_handle = process_message(message)
-            if receipt_handle:
-                if geojson_result:  # processed and valid
-                    deleted = delete_message(queue_url, receipt_handle)
-                elif geojson_result == "skip":  # intentionally skipped
-                    deleted = delete_message(queue_url, receipt_handle)
-
-                if deleted:
-                    logger.info(f"Deleted message {message.get('MessageId')}")
-                else:
-                    logger.warning(f"Failed to delete message {message.get('MessageId')}")
-
-    except Exception as e:
-        logger.error(f"Error in message consumption: {e}")
+        except KeyboardInterrupt:
+            logger.info("Stopping message consumption (KeyboardInterrupt).")
+            break
+        except Exception as e:
+            logger.error(f"Error during message consumption: {e}")
+            time.sleep(5)  # Wait before retrying after error
 
 
 if __name__ == "__main__":

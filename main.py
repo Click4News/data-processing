@@ -20,8 +20,8 @@ def scheduled_consumer():
         logging.info("Running scheduled SQS consumer...")
         consume_messages(
             queue_name="test-queue",
-            max_messages=20,
-            wait_time=0,           
+            max_messages=5,
+            wait_time=0,             # no need to wait on Cloud Run
             visibility_timeout=30
         )
     except Exception as e:
