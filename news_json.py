@@ -45,6 +45,8 @@ def get_queue_url(queue_name, create_if_not_exists=True):
 def process_message(message):
     message_id = message.get('MessageId', 'unknown')
     receipt_handle = message.get('ReceiptHandle')
+    category = ""        
+    body_json = {}       
 
     try:
         body = message.get('Body', '{}')
@@ -92,8 +94,8 @@ def process_message(message):
                     {"$inc": {"total_likes_received": 1}},
                     upsert=True
                 )
-                boost = (0.4 * actor_cred + 0.3 * likes - 0.5 * fakeflags) / 2
-            else:  # FAKEFLAGGED
+                boost = (0.2 * likes + 0.3 * actor_cred) / 2
+            else:  
                 fakeflags += 1
                 collection.update_one(
                     {"features.properties.message_id": message_id},
@@ -104,7 +106,7 @@ def process_message(message):
                     {"$inc": {"total_fakeflags_received": 1}},
                     upsert=True
                 )
-                boost = (-0.3 * actor_cred - 0.4 * fakeflags + 0.2 * likes) / 2
+                boost = (-0.4 * fakeflags - 0.3 * actor_cred) / 2
 
             owner_doc = users_collection.find_one({"userid": owner_userid})
             owner_score = owner_doc.get("credibility_score", 50) if owner_doc else 50
@@ -165,8 +167,13 @@ def process_message(message):
             return "skip", receipt_handle
 
         if not url or not isinstance(url, str) or not url.startswith("http"):
-            logger.warning(f"Message {message_id} skipped due to missing or invalid URL.")
+            if category.lower() == "user-generated":
+                url = "URL not provided"
+                logger.info(f"Category is user-generated; skipping URL validation for message {message_id}.")
+            else:
+                logger.warning(f"Message {message_id} skipped due to missing or invalid URL.")
             return "skip", receipt_handle
+
 
         extracted_text = body_json.get("body", "")
         if not extracted_text or len(extracted_text.strip()) < 20:
